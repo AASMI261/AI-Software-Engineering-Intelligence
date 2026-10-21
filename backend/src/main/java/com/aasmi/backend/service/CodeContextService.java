@@ -30,10 +30,13 @@ public class CodeContextService {
         if (!file.startsWith(projectDirectory)) {
             throw new IOException("Invalid file path.");
         }
+System.out.println("Project directory: " + projectDirectory);
+System.out.println("Resolved source file: " + file);
+System.out.println("File exists: " + Files.exists(file));
 
-        if (!Files.exists(file)) {
-            throw new IOException("Source file not found.");
-        }
+if (!Files.exists(file)) {
+    throw new IOException("Source file not found: " + file);
+}
 
         List<String> lines = Files.readAllLines(file);
 

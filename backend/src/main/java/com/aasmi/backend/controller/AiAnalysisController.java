@@ -53,9 +53,11 @@ public class AiAnalysisController {
 
             return ResponseEntity.ok(result);
 
-        } catch (Exception e) {
+       } catch (Exception e) {
+    e.printStackTrace();
 
-            return ResponseEntity.badRequest().build();
-        }
+    return ResponseEntity.badRequest()
+            .body(null);
+}
     }
 }

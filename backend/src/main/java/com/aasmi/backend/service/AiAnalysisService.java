@@ -47,6 +47,10 @@ public class AiAnalysisService {
                         new RuntimeException("Finding not found."));
 
         try {
+                System.out.println("Requested projectId: " + projectId);
+System.out.println("Finding projectId: " + finding.getProjectId());
+System.out.println("Finding filePath: " + finding.getFilePath());
+System.out.println("Finding lineNumber: " + finding.getLineNumber());
 
             String codeContext =
                     codeContextService.getCodeContext(
