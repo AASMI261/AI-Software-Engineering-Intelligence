@@ -1,0 +1,576 @@
+.fixplans-page {
+display: flex;
+flex-direction: column;
+gap: 24px;
+padding: 8px 0 32px;
+color: #e8eaf2;
+}
+
+.fixplans-page * {
+box-sizing: border-box;
+}
+
+.fixplans-header {
+display: flex;
+justify-content: space-between;
+align-items: flex-start;
+gap: 20px;
+}
+
+.fixplans-eyebrow {
+display: flex;
+align-items: center;
+gap: 8px;
+color: #a99aff;
+font-size: 11px;
+font-weight: 800;
+letter-spacing: 1.5px;
+}
+
+.fixplans-header h1,
+.fixplans-results-header h2 {
+margin: 10px 0;
+color: #f5f6fc;
+font-size: clamp(26px, 3vw, 34px);
+letter-spacing: -1px;
+}
+
+.fixplans-header > div:first-child > p,
+.fixplans-results-header > div > p {
+max-width: 650px;
+margin: 0;
+color: #9298ad;
+font-size: 14px;
+line-height: 1.7;
+}
+
+.fixplans-project-badge {
+display: inline-flex;
+align-items: center;
+gap: 9px;
+padding: 10px 14px;
+border: 1px solid #273d39;
+border-radius: 999px;
+background: #142522;
+color: #8fe0bf;
+font-size: 12px;
+white-space: nowrap;
+}
+
+.fixplans-project-badge > span {
+width: 7px;
+height: 7px;
+border-radius: 50%;
+background: #56d6a3;
+box-shadow: 0 0 10px #56d6a355;
+}
+
+.fixplans-intro {
+display: flex;
+align-items: flex-start;
+gap: 16px;
+padding: 22px;
+border: 1px solid #343051;
+border-radius: 16px;
+background: linear-gradient(110deg, #211d39, #171b2c);
+}
+
+.fixplans-intro-icon {
+display: grid;
+flex-shrink: 0;
+place-items: center;
+width: 48px;
+height: 48px;
+border: 1px solid #51458a;
+border-radius: 13px;
+background: #302654;
+color: #c4b7ff;
+}
+
+.fixplans-intro h2 {
+margin: 2px 0 8px;
+color: #f0edff;
+font-size: 17px;
+}
+
+.fixplans-intro p {
+max-width: 800px;
+margin: 0;
+color: #aaa9c2;
+font-size: 13px;
+line-height: 1.8;
+}
+
+.fixplans-workspace {
+display: grid;
+grid-template-columns: minmax(0, 1.5fr) minmax(270px, 0.85fr);
+gap: 20px;
+align-items: start;
+}
+
+.fixplans-panel,
+.fixplans-results {
+min-width: 0;
+padding: 22px;
+border: 1px solid #2c3041;
+border-radius: 16px;
+background: #171a25;
+}
+
+.fixplans-panel-heading {
+display: flex;
+align-items: center;
+gap: 12px;
+margin-bottom: 24px;
+}
+
+.fixplans-heading-icon {
+display: grid;
+flex-shrink: 0;
+place-items: center;
+width: 42px;
+height: 42px;
+border: 1px solid #293d55;
+border-radius: 12px;
+background: #1d2d40;
+color: #7ec4ff;
+}
+
+.fixplans-heading-icon.purple {
+border-color: #493c70;
+background: #2a2342;
+color: #c1adff;
+}
+
+.fixplans-panel-heading h2 {
+margin: 0 0 5px;
+color: #f0f1f8;
+font-size: 16px;
+}
+
+.fixplans-panel-heading p {
+margin: 0;
+color: #9097ad;
+font-size: 12px;
+}
+
+.fixplans-form label {
+display: block;
+margin-bottom: 9px;
+color: #c7cbda;
+font-size: 12px;
+font-weight: 700;
+}
+
+.fixplans-form select {
+width: 100%;
+min-height: 46px;
+padding: 12px;
+border: 1px solid #383d51;
+border-radius: 10px;
+outline: none;
+background: #11141e;
+color: #e9eaf4;
+font: inherit;
+font-size: 13px;
+}
+
+.fixplans-form select:focus {
+border-color: #8c7af5;
+box-shadow: 0 0 0 3px #8c7af51b;
+}
+
+.fixplans-form select option {
+background: #171a25;
+color: #e9eaf4;
+}
+
+.fixplans-actions {
+display: flex;
+flex-wrap: wrap;
+gap: 10px;
+margin-top: 16px;
+}
+
+.fixplans-actions button {
+display: inline-flex;
+justify-content: center;
+align-items: center;
+gap: 9px;
+min-height: 42px;
+padding: 10px 15px;
+border-radius: 10px;
+cursor: pointer;
+font-size: 12px;
+font-weight: 700;
+transition: 0.2s ease;
+}
+
+.fixplans-primary-button {
+flex: 1;
+border: 1px solid #8c7af5;
+background: linear-gradient(110deg, #7965e9, #6552ce);
+color: white;
+}
+
+.fixplans-primary-button:hover:not(:disabled) {
+transform: translateY(-1px);
+box-shadow: 0 7px 20px #7965e933;
+}
+
+.fixplans-secondary-button {
+border: 1px solid #373d50;
+background: #222633;
+color: #d3d7e7;
+}
+
+.fixplans-secondary-button:hover:not(:disabled) {
+border-color: #69718b;
+background: #292e3e;
+}
+
+.fixplans-actions button:disabled {
+cursor: not-allowed;
+opacity: 0.55;
+}
+
+.fixplans-spinner {
+animation: fixplans-spin 1s linear infinite;
+}
+
+@keyframes fixplans-spin {
+to {
+transform: rotate(360deg);
+}
+}
+
+.fixplans-selected-finding {
+margin-top: 22px;
+padding: 17px;
+border: 1px solid #393248;
+border-radius: 12px;
+background: #1e1b2a;
+}
+
+.fixplans-selected-heading {
+display: flex;
+align-items: center;
+gap: 8px;
+color: #e8bd81;
+font-size: 12px;
+font-weight: 700;
+}
+
+.fixplans-selected-finding h3 {
+margin: 14px 0 7px;
+color: #f0eef9;
+font-size: 15px;
+}
+
+.fixplans-selected-finding > p {
+margin: 0;
+color: #b0b2c4;
+font-size: 13px;
+line-height: 1.7;
+overflow-wrap: anywhere;
+}
+
+.fixplans-finding-meta {
+display: flex;
+flex-wrap: wrap;
+gap: 8px;
+margin: 14px 0;
+}
+
+.fixplans-tag {
+padding: 5px 9px;
+border: 1px solid #41465b;
+border-radius: 6px;
+background: #282b3a;
+color: #c8cbe0;
+font-size: 10px;
+text-transform: uppercase;
+}
+
+.fixplans-file-path {
+display: block;
+overflow-wrap: anywhere;
+color: #9dc9ff;
+font-size: 12px;
+line-height: 1.8;
+}
+
+.fixplans-existing-suggestion {
+margin-top: 15px;
+padding-top: 14px;
+border-top: 1px solid #383145;
+}
+
+.fixplans-existing-suggestion strong {
+color: #c6b9ff;
+font-size: 12px;
+}
+
+.fixplans-existing-suggestion p {
+margin: 8px 0 0;
+color: #b7b8ca;
+font-size: 12px;
+line-height: 1.7;
+}
+
+.fixplans-workflow {
+display: flex;
+flex-direction: column;
+gap: 24px;
+padding: 5px 0 22px;
+}
+
+.fixplans-workflow-step {
+display: flex;
+align-items: flex-start;
+gap: 12px;
+}
+
+.fixplans-workflow-step > span {
+display: grid;
+flex-shrink: 0;
+place-items: center;
+width: 34px;
+height: 34px;
+border: 1px solid #41445a;
+border-radius: 10px;
+background: #242735;
+color: #b5a6ff;
+}
+
+.fixplans-workflow-step.complete > span {
+border-color: #285847;
+background: #19372f;
+color: #80e1b8;
+}
+
+.fixplans-workflow-step strong {
+display: block;
+margin: 2px 0 5px;
+color: #e5e6f0;
+font-size: 12px;
+}
+
+.fixplans-workflow-step small {
+color: #9097ad;
+font-size: 11px;
+line-height: 1.7;
+}
+
+.fixplans-safety-note {
+display: flex;
+align-items: flex-start;
+gap: 10px;
+padding: 13px;
+border: 1px solid #4b3e2e;
+border-radius: 10px;
+background: #29241e;
+color: #e3bb83;
+}
+
+.fixplans-safety-note svg {
+flex-shrink: 0;
+margin-top: 2px;
+}
+
+.fixplans-safety-note p {
+margin: 0;
+color: #d0bda4;
+font-size: 11px;
+line-height: 1.8;
+}
+
+.fixplans-alert {
+display: flex;
+align-items: flex-start;
+gap: 10px;
+padding: 14px 16px;
+border: 1px solid;
+border-radius: 10px;
+font-size: 13px;
+line-height: 1.6;
+overflow-wrap: anywhere;
+}
+
+.fixplans-alert svg {
+flex-shrink: 0;
+margin-top: 1px;
+}
+
+.fixplans-alert.error {
+border-color: #663a43;
+background: #301e27;
+color: #ffabb5;
+}
+
+.fixplans-alert.success {
+border-color: #285847;
+background: #19372f;
+color: #94e9c3;
+}
+
+.fixplans-results {
+display: flex;
+flex-direction: column;
+gap: 22px;
+}
+
+.fixplans-results-header {
+display: flex;
+justify-content: space-between;
+align-items: flex-start;
+gap: 18px;
+}
+
+.fixplans-results-header h2 {
+margin: 8px 0;
+font-size: 23px;
+}
+
+.fixplans-risk-badge {
+flex-shrink: 0;
+padding: 7px 10px;
+border: 1px solid #4b4f60;
+border-radius: 8px;
+background: #262a38;
+color: #d6d8e8;
+font-size: 11px;
+font-weight: 700;
+}
+
+.fixplans-risk-badge.low {
+border-color: #285847;
+background: #19372f;
+color: #94e9c3;
+}
+
+.fixplans-risk-badge.medium {
+border-color: #67522d;
+background: #332b1e;
+color: #f0cf8e;
+}
+
+.fixplans-risk-badge.high {
+border-color: #703d46;
+background: #351f29;
+color: #ffabb5;
+}
+
+.fixplans-result-grid {
+display: grid;
+grid-template-columns: repeat(2, minmax(0, 1fr));
+gap: 14px;
+}
+
+.fixplans-result-card {
+min-width: 0;
+padding: 17px;
+border: 1px solid #30364a;
+border-radius: 12px;
+background: #121621;
+}
+
+.fixplans-result-card.full {
+grid-column: 1 / -1;
+}
+
+.fixplans-result-title {
+display: flex;
+align-items: center;
+gap: 9px;
+margin-bottom: 12px;
+color: #b9aaff;
+}
+
+.fixplans-result-title h3 {
+margin: 0;
+color: #e7e8f2;
+font-size: 13px;
+}
+
+.fixplans-result-card > p {
+margin: 0;
+color: #b6bbce;
+font-size: 13px;
+line-height: 1.85;
+overflow-wrap: anywhere;
+white-space: pre-wrap;
+}
+
+.fixplans-result-card pre {
+max-width: 100%;
+margin: 0;
+padding: 14px;
+overflow-x: auto;
+border: 1px solid #2c3346;
+border-radius: 9px;
+background: #0d111b;
+color: #b8d8ff;
+font-family: Consolas, monospace;
+font-size: 12px;
+line-height: 1.8;
+white-space: pre-wrap;
+overflow-wrap: anywhere;
+}
+
+.fixplans-result-footer {
+display: flex;
+flex-wrap: wrap;
+justify-content: space-between;
+gap: 12px;
+padding-top: 17px;
+border-top: 1px solid #303448;
+color: #9da5ba;
+font-size: 12px;
+}
+
+.fixplans-result-footer strong {
+color: #dedff0;
+}
+
+@media (max-width: 1050px) {
+.fixplans-workspace {
+grid-template-columns: 1fr;
+}
+}
+
+@media (max-width: 650px) {
+.fixplans-page {
+gap: 17px;
+}
+
+.fixplans-header,
+.fixplans-results-header {
+flex-direction: column;
+}
+
+.fixplans-panel,
+.fixplans-results {
+padding: 16px;
+}
+
+.fixplans-intro {
+padding: 16px;
+}
+
+.fixplans-result-grid {
+grid-template-columns: 1fr;
+}
+
+.fixplans-result-card.full {
+grid-column: auto;
+}
+
+.fixplans-actions {
+flex-direction: column;
+}
+
+.fixplans-actions button {
+width: 100%;
+}
+}

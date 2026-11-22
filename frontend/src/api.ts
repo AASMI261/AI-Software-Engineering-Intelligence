@@ -8,6 +8,7 @@ export type Project = {
   createdAt?: string
   updatedAt?: string
 }
+
 export type Analysis = {
   id: string
   projectId: string
@@ -31,6 +32,36 @@ export type Finding = {
   resolvedAt: string | null
   lastVerifiedAt: string | null
 }
+
+export type FixPlan = {
+  id?: string
+  _id?: string
+  projectId?: string
+  findingId?: string
+  aiAnalysisId?: string
+  filePath?: string
+  lineNumber?: number | null
+  problem?: string
+  changeDescription?: string
+  proposedChanges?: string
+  testsToRun?: string
+  verificationSteps?: string
+  risk?: string
+  confidence?: string
+  status?: string
+  generatedAt?: string
+}
+
+export type QualityScoreResponse = {
+  projectId: string
+  qualityScore: number
+  rating: string
+  totalFindings: number
+  openFindings: number
+  resolvedFindings: number
+  severityCounts: Record<string, number>
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const message = await response.text()
@@ -45,34 +76,6 @@ async function handleResponse<T>(response: Response): Promise<T> {
 export async function getProjects(): Promise<Project[]> {
   const response = await fetch(`${API_BASE}/projects`)
   return handleResponse<Project[]>(response)
-}
-export async function getProjectFindings(
-  projectId: string,
-): Promise<Finding[]> {
-  const response = await fetch(
-    `${API_BASE}/projects/${projectId}/findings`,
-  )
-
-  if (!response.ok) {
-    throw new Error(
-      (await response.text()) ||
-        `Failed to fetch findings: HTTP ${response.status}`,
-    )
-  }
-
-  const data = await response.json()
-
-  // API array return kare to directly use karo.
-  if (Array.isArray(data)) {
-    return data as Finding[]
-  }
-
-  // API { findings: [...] } return kare to usko handle karo.
-  if (Array.isArray(data.findings)) {
-    return data.findings as Finding[]
-  }
-
-  return []
 }
 
 export async function createProject(data: {
@@ -99,7 +102,7 @@ export async function uploadProject(
   formData.append('file', file)
 
   const response = await fetch(
-    `${API_BASE}/projects/${projectId}/upload`,
+    `${API_BASE}/projects/${encodeURIComponent(projectId)}/upload`,
     {
       method: 'POST',
       body: formData,
@@ -107,42 +110,131 @@ export async function uploadProject(
   )
 
   if (!response.ok) {
-    throw new Error(await response.text() || 'ZIP upload failed')
+    throw new Error((await response.text()) || 'ZIP upload failed')
   }
 
   return response.text()
 }
+
+export async function analyzeProject(projectId: string): Promise<Analysis> {
+  const response = await fetch(
+    `${API_BASE}/projects/${encodeURIComponent(projectId)}/analyze`,
+    { method: 'POST' },
+  )
+
+  return handleResponse<Analysis>(response)
+}
+
 export async function runStaticAnalysis(
   projectId: string,
   analysisId: string,
 ): Promise<Finding[]> {
   const response = await fetch(
-    `${API_BASE}/projects/${projectId}/analyses/${analysisId}/static-analysis`,
+    `${API_BASE}/projects/${encodeURIComponent(projectId)}/analyses/${encodeURIComponent(analysisId)}/static-analysis`,
     { method: 'POST' },
+  )
+
+  return handleResponse<Finding[]>(response)
+}
+
+export async function getProjectFindings(projectId: string): Promise<Finding[]> {
+  const response = await fetch(
+    `${API_BASE}/projects/${encodeURIComponent(projectId)}/findings`,
   )
 
   if (!response.ok) {
     throw new Error(
       (await response.text()) ||
-        `Static analysis failed: HTTP ${response.status}`,
+        `Failed to fetch findings: HTTP ${response.status}`,
     )
   }
 
-  return response.json() as Promise<Finding[]>
+  const data = await response.json()
+
+  if (Array.isArray(data)) {
+    return data as Finding[]
+  }
+
+  if (Array.isArray(data.findings)) {
+    return data.findings as Finding[]
+  }
+
+  return []
 }
-export async function analyzeProject(
+
+export async function getQualityScore(
   projectId: string,
-): Promise<Analysis> {
+): Promise<QualityScoreResponse> {
   const response = await fetch(
-    `${API_BASE}/projects/${projectId}/analyze`,
-    { method: 'POST' },
+    `${API_BASE}/projects/${encodeURIComponent(projectId)}/quality-score`,
+  )
+  return handleResponse<QualityScoreResponse>(response)
+}
+
+export async function generateFixPlan(
+  projectId: string,
+  findingId: string,
+): Promise<FixPlan> {
+  const response = await fetch(
+    `${API_BASE}/projects/${encodeURIComponent(projectId)}/findings/${encodeURIComponent(findingId)}/fix-plan`,
+    {
+      method: 'POST',
+    },
   )
 
-  if (!response.ok) {
-    throw new Error(
-      (await response.text()) || `Analysis failed: HTTP ${response.status}`,
-    )
-  }
+  return handleResponse<FixPlan>(response)
+}
 
-  return response.json() as Promise<Analysis>
+export async function getProjectFixPlans(projectId: string): Promise<FixPlan[]> {
+  const response = await fetch(
+    `${API_BASE}/projects/${encodeURIComponent(projectId)}/fix-plans`,
+  )
+
+  const data = await handleResponse<FixPlan[] | { fixPlans?: FixPlan[]; plans?: FixPlan[] }>(
+    response,
+  )
+
+  if (Array.isArray(data)) {
+    return data
+  }
+  if (Array.isArray(data.fixPlans)) {
+    return data.fixPlans
+  }
+  if (Array.isArray(data.plans)) {
+    return data.plans
+  }
+  return []
+}
+
+export async function approveFixPlan(fixPlanId: string): Promise<FixPlan> {
+  const response = await fetch(
+    `${API_BASE}/fix-plans/${encodeURIComponent(fixPlanId)}/approve`,
+    {
+      method: 'POST',
+    },
+  )
+
+  return handleResponse<FixPlan>(response)
+}
+
+export async function rejectFixPlan(fixPlanId: string): Promise<FixPlan> {
+  const response = await fetch(
+    `${API_BASE}/fix-plans/${encodeURIComponent(fixPlanId)}/reject`,
+    {
+      method: 'POST',
+    },
+  )
+
+  return handleResponse<FixPlan>(response)
+}
+
+export async function applyFixPlan(fixPlanId: string): Promise<FixPlan> {
+  const response = await fetch(
+    `${API_BASE}/fix-agent/${encodeURIComponent(fixPlanId)}/apply`,
+    {
+      method: 'POST',
+    },
+  )
+
+  return handleResponse<FixPlan>(response)
 }

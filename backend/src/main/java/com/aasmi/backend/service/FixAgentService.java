@@ -1,80 +1,77 @@
 package com.aasmi.backend.service;
 
+import com.aasmi.backend.model.Analysis;
 import com.aasmi.backend.model.CodePatch;
+import com.aasmi.backend.model.Finding;
 import com.aasmi.backend.model.FixPlan;
+import com.aasmi.backend.repository.FindingRepository;
 import com.aasmi.backend.repository.FixPlanRepository;
 import org.springframework.stereotype.Service;
-import com.aasmi.backend.model.Analysis;
-import com.aasmi.backend.model.Finding;
-import com.aasmi.backend.repository.FindingRepository;
-import java.util.List;
-import com.aasmi.backend.service.ProjectAnalyzerService;
-import com.aasmi.backend.service.StaticAnalysisService;
+
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 @Service
 public class FixAgentService {
 
-private final FixPlanRepository fixPlanRepository;
-private final CodePatchService codePatchService;
-private final ProjectAnalyzerService projectAnalyzerService;
-private final StaticAnalysisService staticAnalysisService;
-private final FindingRepository findingRepository;
-public FixAgentService(
-        FixPlanRepository fixPlanRepository,
-        CodePatchService codePatchService,
-        ProjectAnalyzerService projectAnalyzerService,
-        StaticAnalysisService staticAnalysisService,
-        FindingRepository findingRepository) {
+    private final FixPlanRepository fixPlanRepository;
+    private final CodePatchService codePatchService;
+    private final ProjectAnalyzerService projectAnalyzerService;
+    private final StaticAnalysisService staticAnalysisService;
+    private final FindingRepository findingRepository;
 
-    this.fixPlanRepository = fixPlanRepository;
-    this.codePatchService = codePatchService;
-    this.projectAnalyzerService = projectAnalyzerService;
-    this.staticAnalysisService = staticAnalysisService;
-    this.findingRepository = findingRepository;
-}
+    public FixAgentService(
+            FixPlanRepository fixPlanRepository,
+            CodePatchService codePatchService,
+            ProjectAnalyzerService projectAnalyzerService,
+            StaticAnalysisService staticAnalysisService,
+            FindingRepository findingRepository) {
+        this.fixPlanRepository = fixPlanRepository;
+        this.codePatchService = codePatchService;
+        this.projectAnalyzerService = projectAnalyzerService;
+        this.staticAnalysisService = staticAnalysisService;
+        this.findingRepository = findingRepository;
+    }
 
     public FixPlan applyFix(String fixPlanId) {
 
         FixPlan fixPlan = fixPlanRepository.findById(fixPlanId)
-                .orElseThrow(() ->
-                        new RuntimeException("Fix plan not found."));
+                .orElseThrow(() -> new RuntimeException("Fix plan not found."));
 
         // Only approved fixes can be applied
         if (!"APPROVED".equals(fixPlan.getStatus())) {
-            throw new RuntimeException(
-                    "Fix plan must be APPROVED before applying.");
+            throw new RuntimeException("Fix plan must be APPROVED before applying.");
         }
 
         Path backupFile = null;
 
         try {
-
-            // --------------------------------------------------
-            // 1. Locate project directory
-            // --------------------------------------------------
-
-            Path projectDirectory = Paths.get("uploads")
-                    .toAbsolutePath()
-                    .normalize()
+            // 1. Locate project directory safely
+            Path uploadRoot = Paths.get("uploads").toAbsolutePath().normalize();
+            Path projectDirectory = uploadRoot
                     .resolve(fixPlan.getProjectId())
                     .normalize();
 
-            // --------------------------------------------------
-            // 2. Locate target source file
-            // --------------------------------------------------
+            if (!projectDirectory.startsWith(uploadRoot) || projectDirectory.equals(uploadRoot)) {
+                throw new RuntimeException("Invalid project directory path.");
+            }
 
+            // 2. Locate target source file safely
             Path file = projectDirectory
                     .resolve(fixPlan.getFilePath())
                     .normalize();
 
-            // Security check
             if (!file.startsWith(projectDirectory)) {
                 throw new RuntimeException("Invalid file path.");
             }
@@ -83,340 +80,313 @@ public FixAgentService(
                 throw new RuntimeException("Source file not found.");
             }
 
-            // --------------------------------------------------
             // 3. Read original source
-            // --------------------------------------------------
-
             String originalCode = Files.readString(file);
 
-            // --------------------------------------------------
             // 4. Generate AI patch
-            // --------------------------------------------------
-
             CodePatch patch = codePatchService.generatePatch(
                     fixPlan.getProjectId(),
                     fixPlan.getFindingId()
             );
 
-            // --------------------------------------------------
             // 5. Validate patch target
-            // --------------------------------------------------
-
             if (!fixPlan.getFilePath().equals(patch.getFilePath())) {
-                throw new RuntimeException(
-                        "AI patch targets a different file.");
+                throw new RuntimeException("AI patch targets a different file.");
             }
 
-            if (patch.getOldCode() == null ||
-                    patch.getOldCode().isBlank()) {
-
-                throw new RuntimeException(
-                        "AI patch did not provide valid old code.");
+            if (patch.getOldCode() == null || patch.getOldCode().isBlank()) {
+                throw new RuntimeException("AI patch did not provide valid old code.");
             }
 
-            if (patch.getNewCode() == null ||
-                    patch.getNewCode().isBlank()) {
-
-                throw new RuntimeException(
-                        "AI patch did not provide valid new code.");
+            if (patch.getNewCode() == null || patch.getNewCode().isBlank()) {
+                throw new RuntimeException("AI patch did not provide valid new code.");
             }
 
-            // --------------------------------------------------
-            // 6. Make backup
-            // --------------------------------------------------
-
-            backupFile = Paths.get(file.toString() + ".backup");
-
-            Files.writeString(
-                    backupFile,
-                    originalCode
+            // 6. Make a unique backup
+            Path backupCandidate = Files.createTempFile(
+                    file.getParent(),
+                    "fix-agent-",
+                    ".backup"
             );
 
-            System.out.println(
-                    "Backup created: " + backupFile);
+            try {
+                Files.writeString(backupCandidate, originalCode);
+                backupFile = backupCandidate;
+                System.out.println("Backup created: " + backupFile);
+            } catch (IOException e) {
+                Files.deleteIfExists(backupCandidate);
+                throw e;
+            }
 
-            // --------------------------------------------------
-            // 7. Apply exact code replacement
-            // --------------------------------------------------
+            // 7. Apply exact code replacement (must match once)
+            String oldCode = patch.getOldCode();
+            int firstIndex = originalCode.indexOf(oldCode);
 
-            if (!originalCode.contains(patch.getOldCode())) {
+            if (firstIndex == -1) {
+                throw new RuntimeException("Original code from AI patch was not found.");
+            }
 
-                throw new RuntimeException(
-                        "Original code from AI patch was not found.");
+            int secondIndex = originalCode.indexOf(oldCode, firstIndex + oldCode.length());
+            if (secondIndex != -1) {
+                throw new RuntimeException("Unsafe patch: old code appears multiple times.");
             }
 
             String updatedCode = originalCode.replaceFirst(
-                    Pattern.quote(patch.getOldCode()),
+                    Pattern.quote(oldCode),
                     Matcher.quoteReplacement(patch.getNewCode())
             );
 
             if (originalCode.equals(updatedCode)) {
-
-                throw new RuntimeException(
-                        "Source code was not changed.");
+                throw new RuntimeException("Source code was not changed.");
             }
 
             Files.writeString(file, updatedCode);
+            System.out.println("AI patch applied successfully.");
 
-            System.out.println(
-                    "AI patch applied successfully.");
-
-            // --------------------------------------------------
             // 8. Verify source modification
-            // --------------------------------------------------
-
             String modifiedCode = Files.readString(file);
 
-            if (modifiedCode.contains(patch.getOldCode())) {
-
-                throw new RuntimeException(
-                        "Old code still exists after patch.");
+            if (modifiedCode.contains(oldCode)) {
+                throw new RuntimeException("Old code still exists after patch.");
             }
 
             if (!modifiedCode.contains(patch.getNewCode())) {
-
-                throw new RuntimeException(
-                        "New code was not found after patch.");
+                throw new RuntimeException("New code was not found after patch.");
             }
 
-            // --------------------------------------------------
-            // 9. Automated verification
-            // --------------------------------------------------
+            // 9. Compile check across project Java sources
+            boolean compilationPassed = verifyJavaProject(projectDirectory, file);
 
-            boolean verificationPassed =
-                    verifyJavaFile(file);
-
-            if (!verificationPassed) {
-
-                System.out.println(
-                        "Verification FAILED. Rolling back...");
-
+            if (!compilationPassed) {
+                System.out.println("Compilation verification FAILED. Rolling back...");
                 rollback(file, backupFile);
+                Files.deleteIfExists(backupFile);
 
                 fixPlan.setStatus("ROLLED_BACK");
-
                 return fixPlanRepository.save(fixPlan);
             }
 
-            // --------------------------------------------------
-            // 10. Verification successful
-            // --------------------------------------------------
+            System.out.println("Compilation verification PASSED.");
 
-            System.out.println(
-                    "Verification PASSED.");
-
-            fixPlan.setStatus("VERIFIED");
-
-            FixPlan saved = fixPlanRepository.save(fixPlan);
-
-            // Backup is no longer required after successful verification
-      // Run a fresh project analysis after // --------------------------------------------------
-// 10. Fresh analysis and verification
-// --------------------------------------------------
-
-Analysis freshAnalysis =
-        projectAnalyzerService.analyzeProject(
-                fixPlan.getProjectId()
-        );
-
-List<Finding> currentFindings =
-        staticAnalysisService.analyzeJavaCode(
-                fixPlan.getProjectId(),
-                freshAnalysis.getId()
-        );
-
-// Check whether the original finding still exists.
-Finding originalFinding =
-        findingRepository.findById(
-                fixPlan.getFindingId()
-        ).orElseThrow(() ->
-                new RuntimeException(
-                        "Original finding not found."
-                )
-        );
-
-String originalRule = originalFinding.getRule();
-String originalFilePath = originalFinding.getFilePath();
-
-boolean issueStillExists = currentFindings.stream()
-        .anyMatch(finding ->
-                originalRule.equals(finding.getRule())
-                        && originalFilePath.equals(
-                                finding.getFilePath()
-                        )
-        );
-
-// If the original issue remains, restore the source.
-if (issueStillExists) {
-
-    rollback(file, backupFile);
-
-    fixPlan.setStatus("ROLLED_BACK");
-
-    FixPlan rolledBackPlan =
-            fixPlanRepository.save(fixPlan);
-
-    // Re-analyze the restored source.
-    Analysis restoredAnalysis =
-            projectAnalyzerService.analyzeProject(
+            // 10. Fresh analysis and rule verification
+            Analysis freshAnalysis = projectAnalyzerService.analyzeProject(
                     fixPlan.getProjectId()
             );
 
-    staticAnalysisService.analyzeJavaCode(
-            fixPlan.getProjectId(),
-            restoredAnalysis.getId()
-    );
+            List<Finding> currentFindings = staticAnalysisService.analyzeJavaCode(
+                    fixPlan.getProjectId(),
+                    freshAnalysis.getId()
+            );
 
-    Files.deleteIfExists(backupFile);
+            Finding originalFinding = findingRepository.findById(fixPlan.getFindingId())
+                    .orElseThrow(() -> new RuntimeException("Original finding not found."));
 
-    return rolledBackPlan;
-}
+            String originalRule = originalFinding.getRule();
+            String originalFilePath = originalFinding.getFilePath();
 
-// The original issue is no longer detected.
-fixPlan.setStatus("VERIFIED");
+            boolean issueStillExists = currentFindings.stream()
+                    .anyMatch(finding ->
+                            originalRule.equals(finding.getRule())
+                                    && originalFilePath.equals(finding.getFilePath())
+                    );
 
-FixPlan savedPlan =
-        fixPlanRepository.save(fixPlan);
+            if (issueStillExists) {
+                System.out.println("Original finding still present after fix. Rolling back...");
+                rollback(file, backupFile);
+                Files.deleteIfExists(backupFile);
 
-// Remove backup after successful verification.
-Files.deleteIfExists(backupFile);
+                fixPlan.setStatus("ROLLED_BACK");
+                FixPlan rolledBackPlan = fixPlanRepository.save(fixPlan);
 
-return savedPlan;
+                Analysis restoredAnalysis = projectAnalyzerService.analyzeProject(
+                        fixPlan.getProjectId()
+                );
+                staticAnalysisService.analyzeJavaCode(
+                        fixPlan.getProjectId(),
+                        restoredAnalysis.getId()
+                );
+
+                return rolledBackPlan;
+            }
+
+            fixPlan.setStatus("VERIFIED");
+            FixPlan savedPlan = fixPlanRepository.save(fixPlan);
+            Files.deleteIfExists(backupFile);
+
+            return savedPlan;
+
         } catch (Exception e) {
-
-            System.err.println(
-                    "Fix application failed: "
-                            + e.getMessage());
-
-            // --------------------------------------------------
-            // Automatic rollback on unexpected failure
-            // --------------------------------------------------
+            System.err.println("Fix application failed: " + e.getMessage());
 
             if (backupFile != null) {
-
                 try {
+                    Path uploadRoot = Paths.get("uploads").toAbsolutePath().normalize();
+                    Path projectDirectory = uploadRoot.resolve(fixPlan.getProjectId()).normalize();
+                    Path file = projectDirectory.resolve(fixPlan.getFilePath()).normalize();
 
-                    Path projectDirectory = Paths.get("uploads")
-                            .toAbsolutePath()
-                            .normalize()
-                            .resolve(fixPlan.getProjectId())
-                            .normalize();
-
-                    Path file = projectDirectory
-                            .resolve(fixPlan.getFilePath())
-                            .normalize();
-
-                    if (Files.exists(backupFile)) {
-
-                        Files.copy(
-                                backupFile,
-                                file,
-                                java.nio.file.StandardCopyOption.REPLACE_EXISTING
-                        );
+                    if (projectDirectory.startsWith(uploadRoot)
+                            && file.startsWith(projectDirectory)
+                            && Files.exists(backupFile)) {
+                        rollback(file, backupFile);
+                        Files.deleteIfExists(backupFile);
 
                         fixPlan.setStatus("ROLLED_BACK");
-
                         fixPlanRepository.save(fixPlan);
-
-                        System.out.println(
-                                "Rollback completed.");
+                        System.out.println("Rollback completed.");
                     }
-
                 } catch (Exception rollbackError) {
-
-                    System.err.println(
-                            "Rollback failed: "
-                                    + rollbackError.getMessage());
+                    System.err.println("Rollback failed: " + rollbackError.getMessage());
                 }
             }
 
-            throw new RuntimeException(
-                    "Fix application failed: "
-                            + e.getMessage(),
-                    e
-            );
+            throw new RuntimeException("Fix application failed: " + e.getMessage(), e);
         }
     }
 
     // ==========================================================
-    // Java Verification
+    // Java Project Verification
     // ==========================================================
 
-    private boolean verifyJavaFile(Path javaFile)
-            throws IOException, InterruptedException {
+    private boolean verifyJavaProject(Path projectDirectory, Path targetJavaFile) {
 
-        System.out.println(
-                "Running Java compilation verification...");
+        Path tempDir = null;
 
-        ProcessBuilder processBuilder =
-                new ProcessBuilder(
-                        "javac",
-                        javaFile.toString()
-                );
+        try {
+            Path sourceRoot = resolveSourceRoot(projectDirectory, targetJavaFile);
+            List<String> javaSourcePaths = collectJavaFiles(sourceRoot);
 
-        processBuilder.redirectErrorStream(true);
+            if (javaSourcePaths.isEmpty()) {
+                javaSourcePaths = List.of(targetJavaFile.toAbsolutePath().toString());
+            }
 
-        Process process = processBuilder.start();
+            tempDir = Files.createTempDirectory("fix-agent-compile-");
+            Path classesDir = Files.createDirectory(tempDir.resolve("classes"));
+            Path outputFile = tempDir.resolve("compiler-output.txt");
 
-        String output = new String(
-                process.getInputStream().readAllBytes()
-        );
+            List<String> command = new ArrayList<>();
+            command.add("javac");
+            command.add("-d");
+            command.add(classesDir.toString());
+            command.add("-sourcepath");
+            command.add(sourceRoot.toString());
 
-        boolean finished = process.waitFor(
-                60,
-                TimeUnit.SECONDS
-        );
+            List<String> jarPaths = collectJarFiles(projectDirectory);
+            if (!jarPaths.isEmpty()) {
+                command.add("-cp");
+                command.add(String.join(File.pathSeparator, jarPaths));
+            }
 
-        if (!finished) {
+            command.addAll(javaSourcePaths);
 
-            process.destroyForcibly();
+            ProcessBuilder processBuilder = new ProcessBuilder(command);
+            processBuilder.redirectErrorStream(true);
+            processBuilder.redirectOutput(outputFile.toFile());
 
-            System.err.println(
-                    "Compilation timed out.");
+            Process process = processBuilder.start();
+            boolean completed = process.waitFor(60, TimeUnit.SECONDS);
 
-            return false;
-        }
+            if (!completed) {
+                process.destroyForcibly();
+                process.waitFor();
+                System.err.println("Java compilation timed out.");
+                return false;
+            }
 
-        System.out.println(
-                "Compiler output:");
+            String compilerOutput = Files.exists(outputFile)
+                    ? Files.readString(outputFile)
+                    : "";
 
-        System.out.println(output);
+            if (!compilerOutput.isBlank()) {
+                System.out.println("Compiler Output:\n" + compilerOutput);
+            }
 
-        if (process.exitValue() == 0) {
-
+            boolean success = process.exitValue() == 0;
             System.out.println(
-                    "Java compilation PASSED.");
+                    success
+                            ? "Java compilation successful."
+                            : "Java compilation failed."
+            );
 
-            return true;
+            return success;
+
+        } catch (IOException e) {
+            System.err.println("Compilation error: " + e.getMessage());
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            System.err.println("Compilation interrupted.");
+            return false;
+        } finally {
+            if (tempDir != null) {
+                try (var paths = Files.walk(tempDir)) {
+                    paths.sorted(Comparator.reverseOrder())
+                            .forEach(path -> {
+                                try {
+                                    Files.deleteIfExists(path);
+                                } catch (IOException e) {
+                                    System.err.println(
+                                            "Temporary file cleanup failed: "
+                                                    + e.getMessage()
+                                    );
+                                }
+                            });
+                } catch (IOException e) {
+                    System.err.println(
+                            "Temporary directory cleanup failed: "
+                                    + e.getMessage()
+                    );
+                }
+            }
         }
+    }
 
-        System.err.println(
-                "Java compilation FAILED.");
+    private Path resolveSourceRoot(Path projectDirectory, Path targetJavaFile) {
+        Path standardSrcMainJava = projectDirectory.resolve("src/main/java").normalize();
+        if (Files.isDirectory(standardSrcMainJava) && targetJavaFile.startsWith(standardSrcMainJava)) {
+            return standardSrcMainJava;
+        }
+        return projectDirectory;
+    }
 
-        return false;
+    private List<String> collectJavaFiles(Path root) throws IOException {
+        if (!Files.exists(root)) {
+            return List.of();
+        }
+        try (Stream<Path> walk = Files.walk(root)) {
+            return walk
+                    .filter(Files::isRegularFile)
+                    .filter(p -> p.toString().endsWith(".java"))
+                    .map(p -> p.toAbsolutePath().toString())
+                    .toList();
+        }
+    }
+
+    private List<String> collectJarFiles(Path projectDirectory) throws IOException {
+        try (Stream<Path> walk = Files.walk(projectDirectory)) {
+            return walk
+                    .filter(Files::isRegularFile)
+                    .filter(p -> p.toString().endsWith(".jar"))
+                    .map(p -> p.toAbsolutePath().toString())
+                    .toList();
+        }
     }
 
     // ==========================================================
     // Rollback
     // ==========================================================
 
-    private void rollback(
-            Path file,
-            Path backupFile) throws IOException {
+    private void rollback(Path file, Path backupFile) throws IOException {
 
         if (!Files.exists(backupFile)) {
-
-            throw new IOException(
-                    "Backup file not found. Cannot rollback.");
+            throw new IOException("Backup file not found. Cannot rollback.");
         }
 
         Files.copy(
                 backupFile,
                 file,
-                java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                StandardCopyOption.REPLACE_EXISTING
         );
 
-        System.out.println(
-                "Original source restored successfully.");
+        System.out.println("Original source restored successfully.");
     }
 }

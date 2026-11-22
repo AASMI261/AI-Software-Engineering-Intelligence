@@ -2,7 +2,7 @@ package com.aasmi.backend.controller;
 
 import com.aasmi.backend.model.FixPlan;
 import com.aasmi.backend.repository.FixPlanRepository;
-
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -12,65 +12,49 @@ public class FixApprovalController {
 
     private final FixPlanRepository fixPlanRepository;
 
-    public FixApprovalController(
-            FixPlanRepository fixPlanRepository) {
-
+    public FixApprovalController(FixPlanRepository fixPlanRepository) {
         this.fixPlanRepository = fixPlanRepository;
     }
 
     @PostMapping("/{fixPlanId}/approve")
-    public ResponseEntity<?> approveFixPlan(
-            @PathVariable String fixPlanId) {
+    public ResponseEntity<?> approveFixPlan(@PathVariable String fixPlanId) {
 
-        try {
+        FixPlan fixPlan = fixPlanRepository.findById(fixPlanId).orElse(null);
 
-            FixPlan fixPlan =
-                    fixPlanRepository.findById(fixPlanId)
-                            .orElseThrow(() ->
-                                    new RuntimeException(
-                                            "Fix plan not found."
-                                    ));
-
-            fixPlan.setStatus("APPROVED");
-
-            FixPlan saved =
-                    fixPlanRepository.save(fixPlan);
-
-            return ResponseEntity.ok(saved);
-
-        } catch (Exception e) {
-
-            return ResponseEntity
-                    .badRequest()
-                    .body("Approval failed: " + e.getMessage());
+        if (fixPlan == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body("Fix plan not found.");
         }
+
+        if (!"PENDING".equalsIgnoreCase(fixPlan.getStatus())) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body("Only PENDING fix plans can be approved.");
+        }
+
+        fixPlan.setStatus("APPROVED");
+        FixPlan saved = fixPlanRepository.save(fixPlan);
+
+        return ResponseEntity.ok(saved);
     }
 
     @PostMapping("/{fixPlanId}/reject")
-    public ResponseEntity<?> rejectFixPlan(
-            @PathVariable String fixPlanId) {
+    public ResponseEntity<?> rejectFixPlan(@PathVariable String fixPlanId) {
 
-        try {
+        FixPlan fixPlan = fixPlanRepository.findById(fixPlanId).orElse(null);
 
-            FixPlan fixPlan =
-                    fixPlanRepository.findById(fixPlanId)
-                            .orElseThrow(() ->
-                                    new RuntimeException(
-                                            "Fix plan not found."
-                                    ));
-
-            fixPlan.setStatus("REJECTED");
-
-            FixPlan saved =
-                    fixPlanRepository.save(fixPlan);
-
-            return ResponseEntity.ok(saved);
-
-        } catch (Exception e) {
-
-            return ResponseEntity
-                    .badRequest()
-                    .body("Rejection failed: " + e.getMessage());
+        if (fixPlan == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body("Fix plan not found.");
         }
+
+        if (!"PENDING".equalsIgnoreCase(fixPlan.getStatus())) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body("Only PENDING fix plans can be rejected.");
+        }
+
+        fixPlan.setStatus("REJECTED");
+        FixPlan saved = fixPlanRepository.save(fixPlan);
+
+        return ResponseEntity.ok(saved);
     }
 }

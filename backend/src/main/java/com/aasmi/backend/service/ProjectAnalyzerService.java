@@ -5,12 +5,20 @@ import com.aasmi.backend.repository.AnalysisRepository;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
-import java.nio.file.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 public class ProjectAnalyzerService {
+
+    private static final Set<String> IGNORED_DIRS = Set.of(
+            ".git", "node_modules", "target", "build", ".idea", ".vscode"
+    );
 
     private final AnalysisRepository analysisRepository;
 
@@ -20,102 +28,87 @@ public class ProjectAnalyzerService {
 
     public Analysis analyzeProject(String projectId) throws IOException {
 
-        Path projectDirectory = Paths.get("uploads")
-                .toAbsolutePath()
-                .normalize()
-                .resolve(projectId)
-                .normalize();
+        Path uploadRoot = Paths.get("uploads").toAbsolutePath().normalize();
+        Path projectDirectory = uploadRoot.resolve(projectId).normalize();
+
+        if (!projectDirectory.startsWith(uploadRoot) || projectDirectory.equals(uploadRoot)) {
+            throw new IOException("Invalid project directory path.");
+        }
 
         if (!Files.exists(projectDirectory)) {
             throw new IOException("Project files not found.");
         }
 
-        List<String> detectedTechnologies = new ArrayList<>();
+        Set<String> detectedTechnologies = new LinkedHashSet<>();
 
-        // Detect Java
         if (containsFileExtension(projectDirectory, ".java")) {
             detectedTechnologies.add("Java");
         }
 
-        // Detect Maven
         if (Files.exists(projectDirectory.resolve("pom.xml"))) {
             detectedTechnologies.add("Maven");
         }
 
-        // Detect Gradle
         if (Files.exists(projectDirectory.resolve("build.gradle"))
                 || Files.exists(projectDirectory.resolve("build.gradle.kts"))) {
             detectedTechnologies.add("Gradle");
         }
 
-        // Detect Node.js
         if (Files.exists(projectDirectory.resolve("package.json"))) {
             detectedTechnologies.add("Node.js");
         }
 
-        // Detect React
         if (containsFileExtension(projectDirectory, ".jsx")
                 || containsFileExtension(projectDirectory, ".tsx")) {
             detectedTechnologies.add("React");
         }
 
-        // Detect Spring Boot
         if (Files.exists(projectDirectory.resolve("pom.xml"))
                 && containsTextInFiles(projectDirectory, "spring-boot")) {
             detectedTechnologies.add("Spring Boot");
         }
 
-        // Detect Docker
         if (Files.exists(projectDirectory.resolve("Dockerfile"))) {
             detectedTechnologies.add("Docker");
         }
 
-        // Create analysis object
         Analysis analysis = new Analysis(
                 projectId,
-                detectedTechnologies
+                new ArrayList<>(detectedTechnologies)
         );
 
-        // Save analysis in MongoDB
         return analysisRepository.save(analysis);
     }
 
-    private boolean containsFileExtension(
-            Path directory,
-            String extension) throws IOException {
+    private boolean isIgnoredPath(Path root, Path candidate) {
+        Path relative = root.relativize(candidate);
+        for (Path part : relative) {
+            if (IGNORED_DIRS.contains(part.toString())) {
+                return true;
+            }
+        }
+        return false;
+    }
 
+    private boolean containsFileExtension(Path directory, String extension) throws IOException {
         try (var paths = Files.walk(directory)) {
-
             return paths
                     .filter(Files::isRegularFile)
-                    .anyMatch(path ->
-                            path.toString()
-                                    .toLowerCase()
-                                    .endsWith(extension.toLowerCase())
-                    );
+                    .filter(path -> !isIgnoredPath(directory, path))
+                    .anyMatch(path -> path.toString().toLowerCase().endsWith(extension.toLowerCase()));
         }
     }
 
-    private boolean containsTextInFiles(
-            Path directory,
-            String text) throws IOException {
-
+    private boolean containsTextInFiles(Path directory, String text) throws IOException {
         try (var paths = Files.walk(directory)) {
-
             return paths
                     .filter(Files::isRegularFile)
-                    .filter(path ->
-                            path.toString().endsWith(".xml")
-                    )
+                    .filter(path -> !isIgnoredPath(directory, path))
+                    .filter(path -> path.toString().toLowerCase().endsWith(".xml"))
                     .anyMatch(path -> {
-
                         try {
                             String content = Files.readString(path);
-
-                            return content
-                                    .toLowerCase()
-                                    .contains(text.toLowerCase());
-
+                            return content.toLowerCase().contains(text.toLowerCase());
                         } catch (IOException e) {
                             return false;
                         }

@@ -6,57 +6,65 @@ import com.aasmi.backend.model.FixPlan;
 import com.aasmi.backend.repository.AiAnalysisRepository;
 import com.aasmi.backend.repository.FindingRepository;
 import com.aasmi.backend.repository.FixPlanRepository;
-
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 @Service
 public class FixPlanService {
+
+    private static final Set<String> VALID_LEVELS = Set.of("LOW", "MEDIUM", "HIGH");
 
     private final ChatClient chatClient;
     private final FindingRepository findingRepository;
     private final AiAnalysisRepository aiAnalysisRepository;
     private final FixPlanRepository fixPlanRepository;
+    private final ObjectMapper objectMapper;
 
     public FixPlanService(
             ChatClient.Builder chatClientBuilder,
             FindingRepository findingRepository,
             AiAnalysisRepository aiAnalysisRepository,
-            FixPlanRepository fixPlanRepository) {
+            FixPlanRepository fixPlanRepository,
+            ObjectMapper objectMapper) {
 
         this.chatClient = chatClientBuilder.build();
         this.findingRepository = findingRepository;
         this.aiAnalysisRepository = aiAnalysisRepository;
         this.fixPlanRepository = fixPlanRepository;
+        this.objectMapper = objectMapper;
     }
 
     public FixPlan generateFixPlan(String projectId, String findingId) {
 
-        // 1. Finding find karo
         Finding finding = findingRepository.findById(findingId)
                 .orElseThrow(() -> new RuntimeException("Finding not found."));
 
-        // 2. AI analysis find karo
-        List<AiAnalysis> aiAnalyses =
-                aiAnalysisRepository.findByFindingId(findingId);
-
-        if (aiAnalyses.isEmpty()) {
-            throw new RuntimeException(
-                    "AI analysis not found. Run AI analysis first."
-            );
+        if (projectId != null && !projectId.isBlank()
+                && finding.getProjectId() != null
+                && !projectId.equals(finding.getProjectId())) {
+            throw new RuntimeException("Finding does not belong to this project.");
         }
 
-        // Latest AI analysis
-        AiAnalysis aiAnalysis =
-                aiAnalyses.get(aiAnalyses.size() - 1);
+        List<AiAnalysis> aiAnalyses = aiAnalysisRepository.findByFindingId(findingId).stream()
+                .filter(a -> projectId == null || projectId.isBlank()
+                        || a.getProjectId() == null
+                        || projectId.equals(a.getProjectId()))
+                .toList();
 
-        // 3. AI ko Fix Plan generate karne bolo
+        if (aiAnalyses.isEmpty()) {
+            throw new RuntimeException("AI analysis not found. Run AI analysis first.");
+        }
+
+        AiAnalysis aiAnalysis = aiAnalyses.get(aiAnalyses.size() - 1);
+
         String prompt = """
-                You are an expert software engineering assistant.
-
-                Create a safe and practical fix plan for the following software issue.
+                You are a senior software engineer creating a practical remediation plan.
 
                 Project ID:
                 %s
@@ -82,28 +90,26 @@ public class FixPlanService {
                 AI Recommended Fix:
                 %s
 
-                Return ONLY valid JSON.
+                Return ONLY a single valid JSON object. Every JSON string value must be on a single line (use \\n if a line break is needed, never raw newlines or unescaped quotes inside string values).
 
                 Required JSON format:
-
                 {
-                  "problem": "...",
-                  "changeDescription": "...",
-                  "proposedChanges": "...",
-                  "testsToRun": "...",
-                  "verificationSteps": "...",
+                  "problem": "Concise summary of the issue in the target file and line",
+                  "changeDescription": "Clear engineering explanation of how to fix it safely",
+                  "proposedChanges": "Specific code/config changes needed in the exact file without inventing classes or methods",
+                  "testsToRun": "Concrete build/compile and test cases to run",
+                  "verificationSteps": "Step-by-step checks to verify the fix resolves the finding without regressions",
                   "risk": "LOW",
                   "confidence": "HIGH"
                 }
 
                 Rules:
-                - Do not modify source code.
-                - Only create a plan.
-                - Do not invent files, classes or methods.
-                - Keep the proposed change minimal.
-                - risk must be LOW, MEDIUM or HIGH.
-                - confidence must be HIGH, MEDIUM or LOW.
-                - Return JSON only.
+                - Do not modify source code directly.
+                - Do not invent files, classes, or methods that do not exist in the context.
+                - Keep changes minimal and production-safe.
+                - risk must be LOW, MEDIUM, or HIGH.
+                - confidence must be HIGH, MEDIUM, or LOW.
+                - Output JSON only, no extra text before or after.
                 """.formatted(
                 projectId,
                 finding.getType(),
@@ -125,142 +131,134 @@ public class FixPlanService {
                 .call()
                 .content();
 
+        if (response == null || response.isBlank()) {
+            throw new IllegalStateException("Ollama returned an empty Fix Plan response.");
+        }
+
         System.out.println("========== FIX PLAN AI RESPONSE ==========");
         System.out.println(response);
         System.out.println("==========================================");
 
-        // 4. JSON values extract karo
-        String problem = extractJsonValue(response, "problem");
-        String changeDescription =
-                extractJsonValue(response, "changeDescription");
-        String proposedChanges =
-                extractJsonValue(response, "proposedChanges");
-        String testsToRun =
-                extractJsonValue(response, "testsToRun");
-        String verificationSteps =
-                extractJsonValue(response, "verificationSteps");
-        String risk =
-                extractJsonValue(response, "risk");
-        String confidence =
-                extractJsonValue(response, "confidence");
+        try {
+            JsonNode root = parseJsonObject(response);
 
-        // 5. FixPlan create karo
-        FixPlan fixPlan = new FixPlan(
-                projectId,
-                findingId,
-                aiAnalysis.getId(),
-                finding.getFilePath(),
-                finding.getLineNumber(),
-                problem,
-                changeDescription,
-                proposedChanges,
-                testsToRun,
-                verificationSteps,
-                risk,
-                confidence,
-                "PENDING"
-        );
+            String problem = getTextOrDefault(root, "problem", "");
+            String changeDescription = getTextOrDefault(root, "changeDescription", "");
+            String proposedChanges = getTextOrDefault(root, "proposedChanges", "");
+            String testsToRun = getTextOrDefault(root, "testsToRun", "");
+            String verificationSteps = getTextOrDefault(root, "verificationSteps", "");
+            String risk = normalizeLevel(getTextOrDefault(root, "risk", "MEDIUM"));
+            String confidence = normalizeLevel(getTextOrDefault(root, "confidence", "MEDIUM"));
 
-        // 6. MongoDB me save
-        return fixPlanRepository.save(fixPlan);
+            FixPlan fixPlan = new FixPlan(
+                    projectId,
+                    findingId,
+                    aiAnalysis.getId(),
+                    finding.getFilePath(),
+                    finding.getLineNumber(),
+                    problem,
+                    changeDescription,
+                    proposedChanges,
+                    testsToRun,
+                    verificationSteps,
+                    risk,
+                    confidence,
+                    "PENDING"
+            );
+
+            return fixPlanRepository.save(fixPlan);
+
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to parse Fix Plan response: " + e.getMessage(), e);
+        }
     }
 
-    private String extractJsonValue(String json, String key) {
-
-        if (json == null || json.isBlank()) {
-            return "";
+    private JsonNode parseJsonObject(String raw) throws Exception {
+        String cleaned = raw.trim();
+        if (cleaned.startsWith("```")) {
+            int firstNewLine = cleaned.indexOf('\n');
+            if (firstNewLine != -1) {
+                cleaned = cleaned.substring(firstNewLine + 1);
+            }
+            int lastFence = cleaned.lastIndexOf("```");
+            if (lastFence != -1) {
+                cleaned = cleaned.substring(0, lastFence);
+            }
+        }
+        cleaned = cleaned.trim();
+        int start = cleaned.indexOf('{');
+        int end = cleaned.lastIndexOf('}');
+        if (start != -1 && end != -1 && end >= start) {
+            cleaned = cleaned.substring(start, end + 1);
         }
 
-        String cleaned = json.trim();
-
-        // Markdown code fence remove
-        cleaned = cleaned
-                .replace("```json", "")
-                .replace("```", "")
-                .trim();
-
-        String searchKey = "\"" + key + "\"";
-
-        int keyIndex = cleaned.indexOf(searchKey);
-
-        if (keyIndex == -1) {
-            return "";
+        String sanitized = escapeControlCharsInJsonStrings(cleaned);
+        JsonNode root = objectMapper.readTree(sanitized);
+        if (root == null || !root.isObject()) {
+            throw new IllegalStateException("Fix plan response is not a valid JSON object.");
         }
+        return root;
+    }
 
-        int colonIndex = cleaned.indexOf(":", keyIndex);
+    private String escapeControlCharsInJsonStrings(String json) {
+        StringBuilder sb = new StringBuilder(json.length() + 32);
+        boolean inString = false;
+        boolean escaped = false;
 
-        if (colonIndex == -1) {
-            return "";
-        }
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
 
-        int valueStart = colonIndex + 1;
+            if (escaped) {
+                sb.append(c);
+                escaped = false;
+                continue;
+            }
 
-        while (
-                valueStart < cleaned.length()
-                        && Character.isWhitespace(cleaned.charAt(valueStart))
-        ) {
-            valueStart++;
-        }
-
-        // String value
-        if (
-                valueStart < cleaned.length()
-                        && cleaned.charAt(valueStart) == '"'
-        ) {
-
-            StringBuilder value = new StringBuilder();
-
-            boolean escaped = false;
-
-            for (
-                    int i = valueStart + 1;
-                    i < cleaned.length();
-                    i++
-            ) {
-
-                char c = cleaned.charAt(i);
-
-                if (escaped) {
-
-                    switch (c) {
-                        case 'n' -> value.append('\n');
-                        case 'r' -> value.append('\r');
-                        case 't' -> value.append('\t');
-                        case '"' -> value.append('"');
-                        case '\\' -> value.append('\\');
-                        default -> value.append(c);
-                    }
-
-                    escaped = false;
-
-                } else if (c == '\\') {
-
+            if (c == '\\') {
+                sb.append(c);
+                if (inString) {
                     escaped = true;
-
-                } else if (c == '"') {
-
-                    return value.toString();
-
-                } else {
-
-                    value.append(c);
                 }
+                continue;
+            }
+
+            if (c == '"') {
+                inString = !inString;
+                sb.append(c);
+                continue;
+            }
+
+            if (inString) {
+                if (c == '\n') {
+                    sb.append("\\n");
+                } else if (c == '\r') {
+                    sb.append("\\r");
+                } else if (c == '\t') {
+                    sb.append("\\t");
+                } else if (c < 0x20) {
+                    sb.append(String.format("\\u%04x", (int) c));
+                } else {
+                    sb.append(c);
+                }
+            } else {
+                sb.append(c);
             }
         }
 
-        // Non-string value
-        int end = valueStart;
+        return sb.toString();
+    }
 
-        while (
-                end < cleaned.length()
-                        && cleaned.charAt(end) != ','
-                        && cleaned.charAt(end) != '}'
-        ) {
-            end++;
+    private String getTextOrDefault(JsonNode root, String field, String fallback) {
+        JsonNode node = root.get(field);
+        if (node == null || node.isNull()) {
+            return fallback;
         }
+        String text = node.isTextual() ? node.asText() : node.toString();
+        return text.isBlank() ? fallback : text.trim();
+    }
 
-        return cleaned
-                .substring(valueStart, end)
-                .trim();
+    private String normalizeLevel(String value) {
+        String upper = value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+        return VALID_LEVELS.contains(upper) ? upper : "MEDIUM";
     }
 }

@@ -4,32 +4,40 @@ import com.aasmi.backend.model.AiAnalysis;
 import com.aasmi.backend.model.Finding;
 import com.aasmi.backend.repository.AiAnalysisRepository;
 import com.aasmi.backend.repository.FindingRepository;
-
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 
+import java.util.Locale;
+import java.util.Set;
+
 @Service
 public class AiAnalysisService {
+
+    private static final Set<String> VALID_CONFIDENCE = Set.of("HIGH", "MEDIUM", "LOW");
 
     private final ChatClient chatClient;
     private final FindingRepository findingRepository;
     private final AiAnalysisRepository aiAnalysisRepository;
     private final CodeContextService codeContextService;
+    private final ObjectMapper objectMapper;
 
     public AiAnalysisService(
             ChatClient.Builder chatClientBuilder,
             FindingRepository findingRepository,
             AiAnalysisRepository aiAnalysisRepository,
-            CodeContextService codeContextService) {
+            CodeContextService codeContextService,
+            ObjectMapper objectMapper) {
 
         this.chatClient = chatClientBuilder.build();
         this.findingRepository = findingRepository;
         this.aiAnalysisRepository = aiAnalysisRepository;
         this.codeContextService = codeContextService;
+        this.objectMapper = objectMapper;
     }
 
     public String askAI(String message) {
-
         return chatClient
                 .prompt()
                 .user(message)
@@ -37,27 +45,29 @@ public class AiAnalysisService {
                 .content();
     }
 
-    public AiAnalysis analyzeFinding(
-            String projectId,
-            String findingId) {
+    public AiAnalysis analyzeFinding(String projectId, String findingId) {
 
         Finding finding = findingRepository
                 .findById(findingId)
-                .orElseThrow(() ->
-                        new RuntimeException("Finding not found."));
+                .orElseThrow(() -> new RuntimeException("Finding not found."));
+
+        if (projectId != null && !projectId.isBlank()
+                && finding.getProjectId() != null
+                && !projectId.equals(finding.getProjectId())) {
+            throw new RuntimeException("Finding does not belong to this project.");
+        }
 
         try {
-                System.out.println("Requested projectId: " + projectId);
-System.out.println("Finding projectId: " + finding.getProjectId());
-System.out.println("Finding filePath: " + finding.getFilePath());
-System.out.println("Finding lineNumber: " + finding.getLineNumber());
+            System.out.println("Requested projectId: " + projectId);
+            System.out.println("Finding projectId: " + finding.getProjectId());
+            System.out.println("Finding filePath: " + finding.getFilePath());
+            System.out.println("Finding lineNumber: " + finding.getLineNumber());
 
-            String codeContext =
-                    codeContextService.getCodeContext(
-                            projectId,
-                            finding.getFilePath(),
-                            finding.getLineNumber()
-                    );
+            String codeContext = codeContextService.getCodeContext(
+                    projectId,
+                    finding.getFilePath(),
+                    finding.getLineNumber()
+            );
 
             String prompt = """
                     You are an AI Software Engineering Analysis Agent.
@@ -117,29 +127,18 @@ System.out.println("Finding lineNumber: " + finding.getLineNumber());
                     .call()
                     .content();
 
-            /*
-             * Temporary parsing.
-             * We will make this fully structured with
-             * Spring AI structured output after testing.
-             */
+            if (response == null || response.isBlank()) {
+                throw new IllegalStateException("Ollama returned an empty AI analysis response.");
+            }
 
-            String rootCause =
-                    extractJsonValue(response, "rootCause");
+            JsonNode root = parseJsonObject(response);
 
-            String explanation =
-                    extractJsonValue(response, "explanation");
-
-            String impact =
-                    extractJsonValue(response, "impact");
-
-            String recommendedFix =
-                    extractJsonValue(response, "recommendedFix");
-
-            String saferApproach =
-                    extractJsonValue(response, "saferApproach");
-
-            String confidence =
-                    extractJsonValue(response, "confidence");
+            String rootCause = getTextOrDefault(root, "rootCause", "Not available");
+            String explanation = getTextOrDefault(root, "explanation", "Not available");
+            String impact = getTextOrDefault(root, "impact", "Not available");
+            String recommendedFix = getTextOrDefault(root, "recommendedFix", "Not available");
+            String saferApproach = getTextOrDefault(root, "saferApproach", "Not available");
+            String confidence = normalizeConfidence(getTextOrDefault(root, "confidence", "MEDIUM"));
 
             AiAnalysis analysis = new AiAnalysis(
                     projectId,
@@ -155,51 +154,50 @@ System.out.println("Finding lineNumber: " + finding.getLineNumber());
             return aiAnalysisRepository.save(analysis);
 
         } catch (Exception e) {
-
-            throw new RuntimeException(
-                    "AI analysis failed: "
-                            + e.getMessage(),
-                    e
-            );
+            throw new RuntimeException("AI analysis failed: " + e.getMessage(), e);
         }
     }
 
-    private String extractJsonValue(
-            String json,
-            String key) {
-
-        String searchKey = "\"" + key + "\"";
-
-        int keyIndex = json.indexOf(searchKey);
-
-        if (keyIndex == -1) {
-            return "Not available";
+    private JsonNode parseJsonObject(String raw) throws Exception {
+        String cleaned = stripMarkdownFences(raw);
+        int start = cleaned.indexOf('{');
+        int end = cleaned.lastIndexOf('}');
+        if (start != -1 && end != -1 && end >= start) {
+            cleaned = cleaned.substring(start, end + 1);
         }
-
-        int colonIndex =
-                json.indexOf(":", keyIndex);
-
-        if (colonIndex == -1) {
-            return "Not available";
+        JsonNode root = objectMapper.readTree(cleaned);
+        if (root == null || !root.isObject()) {
+            throw new IllegalStateException("AI analysis response is not a valid JSON object.");
         }
+        return root;
+    }
 
-        int firstQuote =
-                json.indexOf("\"", colonIndex + 1);
-
-        if (firstQuote == -1) {
-            return "Not available";
+    private String stripMarkdownFences(String text) {
+        String trimmed = text.trim();
+        if (trimmed.startsWith("```")) {
+            int firstNewLine = trimmed.indexOf('\n');
+            if (firstNewLine != -1) {
+                trimmed = trimmed.substring(firstNewLine + 1);
+            }
+            int lastFence = trimmed.lastIndexOf("```");
+            if (lastFence != -1) {
+                trimmed = trimmed.substring(0, lastFence);
+            }
         }
+        return trimmed.trim();
+    }
 
-        int secondQuote =
-                json.indexOf("\"", firstQuote + 1);
-
-        if (secondQuote == -1) {
-            return "Not available";
+    private String getTextOrDefault(JsonNode root, String field, String fallback) {
+        JsonNode node = root.get(field);
+        if (node == null || node.isNull()) {
+            return fallback;
         }
+        String text = node.isTextual() ? node.asText() : node.toString();
+        return text.isBlank() ? fallback : text.trim();
+    }
 
-        return json.substring(
-                firstQuote + 1,
-                secondQuote
-        );
+    private String normalizeConfidence(String value) {
+        String upper = value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+        return VALID_CONFIDENCE.contains(upper) ? upper : "MEDIUM";
     }
 }

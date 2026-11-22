@@ -50,3 +50,5 @@ export async function getOpenFindings(
 
   return response.json() as Promise<Finding[]>
 }
+
+

@@ -10,12 +10,18 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Service
 public class StaticAnalysisService {
+
+    private static final Set<String> IGNORED_DIRS = Set.of(
+            ".git", "node_modules", "target", "build", ".idea", ".vscode"
+    );
 
     private final FindingRepository findingRepository;
 
@@ -23,15 +29,14 @@ public class StaticAnalysisService {
         this.findingRepository = findingRepository;
     }
 
-    public List<Finding> analyzeJavaCode(
-            String projectId,
-            String analysisId) throws IOException {
+    public List<Finding> analyzeJavaCode(String projectId, String analysisId) throws IOException {
 
-        Path projectDirectory = Paths.get("uploads")
-                .toAbsolutePath()
-                .normalize()
-                .resolve(projectId)
-                .normalize();
+        Path uploadRoot = Paths.get("uploads").toAbsolutePath().normalize();
+        Path projectDirectory = uploadRoot.resolve(projectId).normalize();
+
+        if (!projectDirectory.startsWith(uploadRoot) || projectDirectory.equals(uploadRoot)) {
+            throw new IOException("Invalid project directory path.");
+        }
 
         if (!Files.exists(projectDirectory)) {
             throw new IOException("Project files not found.");
@@ -40,43 +45,29 @@ public class StaticAnalysisService {
         List<Finding> detectedFindings = new ArrayList<>();
 
         try (var paths = Files.walk(projectDirectory)) {
-
             paths.filter(Files::isRegularFile)
-                    .filter(path ->
-                            path.toString()
-                                    .toLowerCase()
-                                    .endsWith(".java"))
+                    .filter(path -> !isIgnoredPath(projectDirectory, path))
+                    .filter(path -> path.toString().toLowerCase().endsWith(".java"))
                     .forEach(path -> {
-
                         try {
-                            analyzeFile(
-                                    projectId,
-                                    analysisId,
-                                    projectDirectory,
-                                    path,
-                                    detectedFindings
-                            );
+                            analyzeFile(projectId, analysisId, projectDirectory, path, detectedFindings);
                         } catch (IOException e) {
                             // Ignore files that cannot be read
                         }
                     });
         }
 
-        /*
-         * Reconcile current scan with existing findings.
-         *
-         * Existing issue -> update it
-         * New issue -> create it
-         * Old issue not detected anymore -> mark RESOLVED
-         */
-        List<Finding> finalFindings =
-                reconcileFindings(
-                        projectId,
-                        analysisId,
-                        detectedFindings
-                );
+        return reconcileFindings(projectId, analysisId, detectedFindings);
+    }
 
-        return finalFindings;
+    private boolean isIgnoredPath(Path root, Path candidate) {
+        Path relative = root.relativize(candidate);
+        for (Path part : relative) {
+            if (IGNORED_DIRS.contains(part.toString())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void analyzeFile(
@@ -87,22 +78,14 @@ public class StaticAnalysisService {
             List<Finding> findings) throws IOException {
 
         List<String> lines = Files.readAllLines(file);
-
-        String relativePath =
-                projectDirectory
-                        .relativize(file)
-                        .toString()
-                        .replace("\\", "/");
+        String relativePath = projectDirectory.relativize(file).toString().replace("\\", "/");
 
         for (int i = 0; i < lines.size(); i++) {
-
             String line = lines.get(i).trim();
-
             int lineNumber = i + 1;
 
             // Rule 1: System.out.println
             if (line.contains("System.out.println")) {
-
                 findings.add(new Finding(
                         projectId,
                         analysisId,
@@ -118,7 +101,6 @@ public class StaticAnalysisService {
 
             // Rule 2: TODO
             if (line.contains("TODO")) {
-
                 findings.add(new Finding(
                         projectId,
                         analysisId,
@@ -133,36 +115,28 @@ public class StaticAnalysisService {
             }
 
             // Rule 3: Empty catch block
-            if (line.equals("catch (Exception e) {")) {
-
-                if (i + 1 < lines.size()) {
-
-                    String nextLine = lines.get(i + 1).trim();
-
-                    if (nextLine.equals("}")) {
-
-                        findings.add(new Finding(
-                                projectId,
-                                analysisId,
-                                "ERROR_HANDLING",
-                                "MEDIUM",
-                                relativePath,
-                                lineNumber,
-                                "Empty catch block detected.",
-                                "JAVA-003",
-                                "Handle the exception properly or log the error."
-                        ));
-                    }
+            if (line.startsWith("catch (") && line.endsWith("{") && i + 1 < lines.size()) {
+                String nextLine = lines.get(i + 1).trim();
+                if (nextLine.equals("}")) {
+                    findings.add(new Finding(
+                            projectId,
+                            analysisId,
+                            "ERROR_HANDLING",
+                            "MEDIUM",
+                            relativePath,
+                            lineNumber,
+                            "Empty catch block detected.",
+                            "JAVA-003",
+                            "Handle the exception properly or log the error."
+                    ));
                 }
             }
 
             // Rule 4: Hard-coded password
             String lowerLine = line.toLowerCase();
-
             if (lowerLine.contains("password")
                     && lowerLine.contains("=")
                     && lowerLine.contains("\"")) {
-
                 findings.add(new Finding(
                         projectId,
                         analysisId,
@@ -182,7 +156,6 @@ public class StaticAnalysisService {
                     || lowerLine.contains("secret"))
                     && lowerLine.contains("=")
                     && lowerLine.contains("\"")) {
-
                 findings.add(new Finding(
                         projectId,
                         analysisId,
@@ -198,7 +171,6 @@ public class StaticAnalysisService {
 
             // Rule 6: Very long line
             if (line.length() > 120) {
-
                 findings.add(new Finding(
                         projectId,
                         analysisId,
@@ -215,9 +187,7 @@ public class StaticAnalysisService {
             // Rule 7: Deeply nested code
             int openingBraces = countCharacter(line, '{');
             int closingBraces = countCharacter(line, '}');
-
             if (openingBraces - closingBraces >= 4) {
-
                 findings.add(new Finding(
                         projectId,
                         analysisId,
@@ -238,85 +208,65 @@ public class StaticAnalysisService {
             String analysisId,
             List<Finding> detectedFindings) {
 
-        List<Finding> existingFindings =
-                findingRepository.findByProjectId(projectId);
+        List<Finding> existingFindings = findingRepository.findByProjectId(projectId);
 
-        Set<String> currentFindingKeys = new HashSet<>();
-
-        List<Finding> finalFindings = new ArrayList<>();
-
-        for (Finding detected : detectedFindings) {
-
-            String key = buildFindingKey(
-                    detected.getRule(),
-                    detected.getFilePath()
-            );
-
-            currentFindingKeys.add(key);
-
-            List<Finding> matchingFindings =
-                    findingRepository.findByProjectIdAndRuleAndFilePath(
-                            projectId,
-                            detected.getRule(),
-                            detected.getFilePath()
-                    );
-
-            Finding finding;
-
-            if (!matchingFindings.isEmpty()) {
-
-                /*
-                 * Reuse the existing finding instead of
-                 * creating another duplicate.
-                 */
-                finding = matchingFindings.get(
-                        matchingFindings.size() - 1
-                );
-
-                finding.setAnalysisId(analysisId);
-                finding.setType(detected.getType());
-                finding.setSeverity(detected.getSeverity());
-                finding.setLineNumber(detected.getLineNumber());
-                finding.setMessage(detected.getMessage());
-                finding.setSuggestedFix(detected.getSuggestedFix());
-
-            } else {
-
-                /*
-                 * Completely new finding.
-                 */
-                finding = detected;
-            }
-
-            finding.setStatus("OPEN");
-            finding.setResolvedAt(null);
-            finding.setLastVerifiedAt(LocalDateTime.now());
-
-            Finding saved = findingRepository.save(finding);
-
-            finalFindings.add(saved);
+        Map<String, List<Finding>> poolByKey = new HashMap<>();
+        for (Finding existing : existingFindings) {
+            String key = buildFindingKey(existing.getRule(), existing.getFilePath());
+            poolByKey.computeIfAbsent(key, k -> new ArrayList<>()).add(existing);
         }
 
-        /*
-         * Check previous findings.
-         *
-         * If an old finding is not present in the current
-         * analysis, mark it as RESOLVED.
-         */
+        Set<String> touchedIds = new HashSet<>();
+        List<Finding> finalFindings = new ArrayList<>();
+        LocalDateTime now = LocalDateTime.now();
+
+        for (Finding detected : detectedFindings) {
+            String key = buildFindingKey(detected.getRule(), detected.getFilePath());
+            List<Finding> candidates = poolByKey.getOrDefault(key, List.of());
+
+            Finding target = null;
+            for (Finding candidate : candidates) {
+                if (candidate.getId() != null && !touchedIds.contains(candidate.getId())) {
+                    target = candidate;
+                    break;
+                }
+            }
+
+            if (target != null) {
+                target.setAnalysisId(analysisId);
+                target.setType(detected.getType());
+                target.setSeverity(detected.getSeverity());
+                target.setLineNumber(detected.getLineNumber());
+                target.setMessage(detected.getMessage());
+                target.setSuggestedFix(detected.getSuggestedFix());
+                target.setStatus("OPEN");
+                target.setResolvedAt(null);
+                target.setLastVerifiedAt(now);
+
+                Finding saved = findingRepository.save(target);
+                if (saved.getId() != null) {
+                    touchedIds.add(saved.getId());
+                }
+                finalFindings.add(saved);
+            } else {
+                detected.setStatus("OPEN");
+                detected.setResolvedAt(null);
+                detected.setLastVerifiedAt(now);
+
+                Finding saved = findingRepository.save(detected);
+                if (saved.getId() != null) {
+                    touchedIds.add(saved.getId());
+                }
+                finalFindings.add(saved);
+            }
+        }
+
         for (Finding existing : existingFindings) {
-
-            String key = buildFindingKey(
-                    existing.getRule(),
-                    existing.getFilePath()
-            );
-
-            if (!currentFindingKeys.contains(key)
-                    && !"RESOLVED".equals(existing.getStatus())) {
-
+            boolean wasTouched = existing.getId() != null && touchedIds.contains(existing.getId());
+            if (!wasTouched && !"RESOLVED".equals(existing.getStatus())) {
                 existing.setStatus("RESOLVED");
-                existing.setResolvedAt(LocalDateTime.now());
-                existing.setLastVerifiedAt(LocalDateTime.now());
-
+                existing.setResolvedAt(now);
+                existing.setLastVerifiedAt(now);
                 findingRepository.save(existing);
             }
         }
@@ -324,26 +274,17 @@ public class StaticAnalysisService {
         return finalFindings;
     }
 
-    private String buildFindingKey(
-            String rule,
-            String filePath) {
-
+    private String buildFindingKey(String rule, String filePath) {
         return rule + "::" + filePath;
     }
 
-    private int countCharacter(
-            String text,
-            char character) {
-
+    private int countCharacter(String text, char character) {
         int count = 0;
-
-        for (char current : text.toCharArray()) {
-
-            if (current == character) {
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) == character) {
                 count++;
             }
         }
-
         return count;
     }
 }

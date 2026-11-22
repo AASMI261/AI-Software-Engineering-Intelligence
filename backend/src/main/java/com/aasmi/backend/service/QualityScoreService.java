@@ -19,8 +19,7 @@ public class QualityScoreService {
 
     public Map<String, Object> calculateQualityScore(String projectId) {
 
-        List<Finding> findings =
-                findingRepository.findByProjectId(projectId);
+        List<Finding> findings = findingRepository.findByProjectId(projectId);
 
         int totalFindings = findings.size();
         int openFindings = 0;
@@ -34,7 +33,6 @@ public class QualityScoreService {
         int deductions = 0;
 
         for (Finding finding : findings) {
-
             String status = finding.getStatus();
             String severity = finding.getSeverity();
 
@@ -43,24 +41,17 @@ public class QualityScoreService {
                 continue;
             }
 
-            if (!"OPEN".equalsIgnoreCase(status)) {
-                continue;
-            }
-
             openFindings++;
 
             if ("CRITICAL".equalsIgnoreCase(severity)) {
                 criticalCount++;
                 deductions += 15;
-
             } else if ("HIGH".equalsIgnoreCase(severity)) {
                 highCount++;
                 deductions += 10;
-
             } else if ("MEDIUM".equalsIgnoreCase(severity)) {
                 mediumCount++;
                 deductions += 5;
-
             } else if ("LOW".equalsIgnoreCase(severity)) {
                 lowCount++;
                 deductions += 2;
@@ -70,7 +61,6 @@ public class QualityScoreService {
         int qualityScore = Math.max(0, 100 - deductions);
 
         String rating;
-
         if (qualityScore >= 90) {
             rating = "EXCELLENT";
         } else if (qualityScore >= 75) {
@@ -88,7 +78,6 @@ public class QualityScoreService {
         severityCounts.put("low", lowCount);
 
         Map<String, Object> result = new HashMap<>();
-
         result.put("projectId", projectId);
         result.put("qualityScore", qualityScore);
         result.put("rating", rating);
